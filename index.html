@@ -49,6 +49,17 @@
     h1, h2, h3, .font-serif { font-family: 'Playfair Display', serif; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Impression d'une recette */
+    #print-sheet { display: none; }
+    @media print {
+      @page { margin: 14mm; }
+      body.is-printing { background: #fff !important; }
+      body.is-printing #root > div { display: block !important; min-height: 0 !important; background: #fff !important; }
+      body.is-printing #root > div > *:not(#print-sheet) { display: none !important; }
+      body.is-printing #print-sheet { display: block !important; }
+      body.is-printing #print-sheet img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
   </style>
 </head>
 <body class="h-full text-slate-800 antialiased selection:bg-amber-100 selection:text-amber-900">
@@ -101,6 +112,9 @@
         ),
         trash: (
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        ),
+        print: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
         ),
         camera: (
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9zM15 13a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -292,7 +306,7 @@
       return "";
     }
 
-    function PhotoImg({ src, fallback, alt, className }) {
+    function PhotoImg({ src, fallback, alt, className, onClick }) {
       const [url, setUrl] = useState(src && IMG_RE.test(src) ? src : "");
       useEffect(() => {
         let alive = true;
@@ -300,7 +314,101 @@
         resolvePhoto(src).then((u) => { if (alive) setUrl(u); });
         return () => { alive = false; };
       }, [src, GH_CFG.token]);
-      return <img src={url || fallback || PLACEHOLDER} alt={alt} className={className} />;
+      return <img src={url || fallback || PLACEHOLDER} alt={alt} className={className} onClick={onClick} />;
+    }
+
+// --- FEUILLE D'IMPRESSION : recette complète avec toutes les photos ---
+    function PrintSheet({ recipe, onDone }) {
+      const [urls, setUrls] = useState(null);
+
+      useEffect(() => {
+        let alive = true;
+        document.body.classList.add("is-printing");
+        (async () => {
+          const srcs = [recipe.resultPhoto, recipe.originalPhoto, ...(recipe.stepPhotos || [])].filter(Boolean);
+          const map = {};
+          await Promise.all(srcs.map(async (src) => { map[src] = await resolvePhoto(src); }));
+          if (alive) setUrls(map);
+        })();
+        return () => { alive = false; document.body.classList.remove("is-printing"); };
+      }, [recipe]);
+
+      useEffect(() => {
+        if (!urls) return;
+        const imgs = Array.from(document.querySelectorAll("#print-sheet img"));
+        Promise.all(imgs.map((img) => img.complete ? null : new Promise((r) => { img.onload = img.onerror = r; })))
+          .then(() => setTimeout(() => window.print(), 150));
+        const after = () => onDone();
+        window.addEventListener("afterprint", after);
+        return () => window.removeEventListener("afterprint", after);
+      }, [urls]);
+
+      const photo = (src) => (src && urls && urls[src]) || null;
+      const stars = recipe.rating > 0 ? "★".repeat(recipe.rating) + "☆".repeat(5 - recipe.rating) : "";
+
+      return (
+        <div id="print-sheet" className="text-slate-900 text-[13px] leading-relaxed">
+          <div className="border-b-2 border-amber-700 pb-2 mb-4">
+            <p className="text-xs uppercase tracking-widest text-amber-700 font-semibold">
+              {recipe.category}{stars ? ` · ${stars}` : ""}
+            </p>
+            <h1 className="text-3xl font-serif font-bold mt-1">{recipe.title}</h1>
+            <p className="text-xs text-slate-600 mt-1">
+              {recipe.prepTime ? `Préparation : ${recipe.prepTime}` : ""}
+              {recipe.cookTime ? ` · Cuisson : ${recipe.cookTime}` : ""}
+              {recipe.servings ? ` · ${recipe.servings} personnes` : ""}
+            </p>
+          </div>
+
+          {photo(recipe.resultPhoto) && (
+            <img src={photo(recipe.resultPhoto)} alt="" className="w-full max-h-[85mm] object-cover rounded-lg mb-4" />
+          )}
+
+          {recipe.adaptations && (
+            <div className="border border-amber-300 bg-amber-50 rounded-lg p-3 mb-4 break-inside-avoid">
+              <h2 className="font-serif font-bold text-base mb-1">Mes adaptations & remarques</h2>
+              <p className="whitespace-pre-line">{recipe.adaptations}</p>
+            </div>
+          )}
+
+          <div className="mb-4 break-inside-avoid">
+            <h2 className="font-serif font-bold text-lg border-b border-slate-300 pb-1 mb-2">Ingrédients</h2>
+            <ul className="columns-2 gap-8">
+              {(recipe.ingredients || []).map((ing, i) => (
+                <li key={i} className="break-inside-avoid">☐ {ing}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="mb-4">
+            <h2 className="font-serif font-bold text-lg border-b border-slate-300 pb-1 mb-3">Préparation</h2>
+            <ol className="space-y-3">
+              {(recipe.steps || []).map((step, i) => (
+                <li key={i} className="break-inside-avoid">
+                  <p><span className="font-bold text-amber-700">{i + 1}.</span> {step}</p>
+                  {photo((recipe.stepPhotos || [])[i]) && (
+                    <img src={photo(recipe.stepPhotos[i])} alt="" className="mt-2 max-h-[60mm] max-w-full rounded-lg border border-slate-200 object-cover" />
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          {(recipe.originalSource || photo(recipe.originalPhoto)) && (
+            <div className="mt-6 pt-3 border-t border-slate-300 break-inside-avoid">
+              <h2 className="font-serif font-bold text-base mb-1">Recette d'origine</h2>
+              {recipe.originalSource && <p className="text-xs text-slate-600 mb-2">Source : {recipe.originalSource}</p>}
+              {photo(recipe.originalPhoto) && (
+                <img src={photo(recipe.originalPhoto)} alt="" className="max-h-[110mm] max-w-full rounded-lg border border-slate-200 object-contain" />
+              )}
+            </div>
+          )}
+
+          {recipe.tags && recipe.tags.length > 0 && (
+            <p className="mt-4 text-xs text-slate-500">{recipe.tags.map((t) => `#${t}`).join("  ")}</p>
+          )}
+        </div>
+      );
     }
 
     // --- EXEMPLES DE RECETTES PAR DÉFAUT ---
@@ -347,6 +455,7 @@
       const [syncStatus, setSyncStatus] = useState("idle"); // 'idle', 'syncing', 'success', 'error'
       const [statusMessage, setStatusMessage] = useState("");
       const [lightboxSrc, setLightboxSrc] = useState(null);
+      const [printRecipe, setPrintRecipe] = useState(null);
 
       // --- PWA : installation, mode hors ligne, mise à jour ---
       const [installPrompt, setInstallPrompt] = useState(null);
@@ -897,11 +1006,19 @@
                     src={selectedRecipe.resultPhoto || selectedRecipe.originalPhoto}
                     fallback="https://placehold.co/800x500/f5f5f4/a8a29e?text=Photo"
                     alt={selectedRecipe.title}
-                    className="w-full h-full object-cover opacity-90"
+                    className={`w-full h-full object-cover opacity-90 ${(selectedRecipe.resultPhoto || selectedRecipe.originalPhoto) ? "cursor-zoom-in" : ""}`}
+                    onClick={(selectedRecipe.resultPhoto || selectedRecipe.originalPhoto) ? () => setLightboxSrc(selectedRecipe.resultPhoto || selectedRecipe.originalPhoto) : undefined}
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent"></div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent pointer-events-none"></div>
                   
                   <div className="absolute top-4 right-4 flex items-center gap-2">
+                    <button
+                      onClick={() => setPrintRecipe(selectedRecipe)}
+                      className="p-2 bg-white/90 hover:bg-white text-slate-700 rounded-full shadow-lg backdrop-blur-md transition"
+                      title="Imprimer la recette avec ses photos"
+                    >
+                      <Icon name="print" className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => { setRecipeToEdit(selectedRecipe); setIsFormOpen(true); }}
                       className="p-2 bg-white/90 hover:bg-white text-slate-700 rounded-full shadow-lg backdrop-blur-md transition"
@@ -924,7 +1041,7 @@
                     </button>
                   </div>
 
-                  <div className="absolute bottom-6 left-6 right-6 text-white">
+                  <div className="absolute bottom-6 left-6 right-6 text-white pointer-events-none">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="bg-amber-600 text-amber-50 text-xs font-semibold px-2.5 py-0.5 rounded-full">
                         {selectedRecipe.category}
@@ -1041,6 +1158,9 @@
               </div>
             </div>
           )}
+
+          {/* FEUILLE D'IMPRESSION */}
+          {printRecipe && <PrintSheet recipe={printRecipe} onDone={() => setPrintRecipe(null)} />}
 
           {/* VISIONNEUSE D'IMAGE */}
           {lightboxSrc && (
