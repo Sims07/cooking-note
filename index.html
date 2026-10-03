@@ -24,7 +24,7 @@
   <!-- React 18 & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <!-- Babel pour JSX -->
+  <!-- Babel pour JSX dans le navigateur -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <!-- Google Fonts: Inter & Playfair Display -->
@@ -35,7 +35,6 @@
   <style>
     body { font-family: 'Inter', sans-serif; }
     h1, h2, h3, .font-serif { font-family: 'Playfair Display', serif; }
-    /* Cache les barres de défilement tout en gardant le scroll */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
@@ -45,6 +44,129 @@
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
+
+    // --- COMPOSANT D'ICÔNES SVG ---
+    function Icon({ name, className = "w-5 h-5" }) {
+      const icons = {
+        book: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        ),
+        github: (
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" fill="currentColor" />
+        ),
+        refresh: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        ),
+        plus: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        ),
+        search: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        ),
+        close: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        ),
+        download: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        ),
+        upload: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+        ),
+        sparkles: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+        ),
+        star: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+        ),
+        clock: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        ),
+        users: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+        ),
+        edit: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        ),
+        trash: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        ),
+        camera: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9zM15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+        )
+      };
+
+      return (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox={name === "github" ? "0 0 24 24" : "0 0 24 24"}
+          stroke={name === "github" ? "none" : "currentColor"}
+          className={className}
+        >
+          {icons[name] || icons.book}
+        </svg>
+      );
+    }
+
+    // --- HELPER DE COMPRESSION D'IMAGE EN CANVAS ---
+    function compressImage(file, maxWidth = 900, quality = 0.7) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (e) => {
+          const img = new Image();
+          img.src = e.target.result;
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            let width = img.width;
+            let height = img.height;
+
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", quality));
+          };
+        };
+      });
+    }
+
+    // --- EXEMPLES DE RECETTES PAR DÉFAUT ---
+    const DEMO_RECIPES = [
+      {
+        id: "demo-1",
+        title: "Poulet Rôti aux Herbes & Ail Doux",
+        category: "Plats",
+        prepTime: "20 min",
+        cookTime: "50 min",
+        servings: 4,
+        rating: 5,
+        originalSource: "Livre 'Recettes Familiales' p. 45",
+        originalPhoto: "https://images.unsplash.com/photo-1598103442097-8b74394b95c6?auto=format&fit=crop&w=800&q=80",
+        resultPhoto: "https://images.unsplash.com/photo-1598103442097-8b74394b95c6?auto=format&fit=crop&w=800&q=80",
+        adaptations: "J'ai remplacé le beurre gras par du beurre clarifié et rajouté du thym frais du jardin avec des gousses d'ail rôties en chemise.",
+        ingredients: [
+          "1 poulet fermier de 1.5 kg",
+          "6 gousses d'ail entières",
+          "3 branches de thym frais",
+          "2 c. à soupe d'huile d'olive",
+          "Sel et poivre moulu"
+        ],
+        steps: [
+          "Préchauffer le four à 200°C.",
+          "Badigeonner le poulet d'huile d'olive et saler généreusement.",
+          "Disposer l'ail et le thym dans le plat.",
+          "Enfourner pour 50 minutes en arrosant à mi-cuisson."
+        ],
+        tags: ["Poulet", "Rôti", "Familial"],
+        updatedAt: new Date().toISOString()
+      }
+    ];
 
     // --- COMPOSANT PRINCIPAL ---
     function App() {
@@ -110,7 +232,6 @@
         try {
           const url = `https://api.github.com/repos/${githubConfig.owner}/${githubConfig.repo}/contents/${githubConfig.path}`;
           
-          // 1. Récupérer le SHA du fichier existant (si présent)
           let sha = "";
           try {
             const getRes = await fetch(url, {
@@ -127,14 +248,12 @@
             console.log("Fichier non existant, création d'un nouveau fichier.");
           }
 
-          // 2. Encoder le contenu JSON en UTF-8 Base64
           const jsonString = JSON.stringify(listToSave, null, 2);
           const bytes = new TextEncoder().encode(jsonString);
           let binString = "";
           bytes.forEach((b) => (binString += String.fromCharCode(b)));
           const contentBase64 = btoa(binString);
 
-          // 3. Effectuer le PUT commit
           const putRes = await fetch(url, {
             method: "PUT",
             headers: {
@@ -187,7 +306,6 @@
           if (!res.ok) throw new Error("Impossible de trouver le fichier sur GitHub.");
 
           const data = await res.json();
-          // Décodage Base64 UTF-8
           const binaryString = atob(data.content.replace(/\n/g, ''));
           const bytes = new Uint8Array(binaryString.length);
           for (let i = 0; i < binaryString.length; i++) {
@@ -231,10 +349,10 @@
             const imported = JSON.parse(event.target.result);
             if (Array.isArray(imported)) {
               setRecipes(imported);
-              alert("Recettes importées avec succès !");
+              setStatusMessage("Recettes importées avec succès !");
             }
           } catch(err) {
-            alert("Erreur lors de la lecture du fichier JSON.");
+            setStatusMessage("Erreur lors de la lecture du fichier JSON.");
           }
         };
         reader.readAsText(file);
@@ -258,10 +376,8 @@
       const handleSaveRecipe = (recipeData) => {
         let updatedList = [];
         if (recipeData.id) {
-          // Édition
           updatedList = recipes.map(r => r.id === recipeData.id ? { ...recipeData, updatedAt: new Date().toISOString() } : r);
         } else {
-          // Création
           const newRecipe = { ...recipeData, id: 'recette-' + Date.now(), updatedAt: new Date().toISOString() };
           updatedList = [newRecipe, ...recipes];
         }
@@ -269,7 +385,6 @@
         setIsFormOpen(false);
         setRecipeToEdit(null);
         
-        // Auto-synchroniser si GitHub est configuré
         if (githubConfig.token && githubConfig.owner && githubConfig.repo) {
           saveToGitHub(updatedList);
         }
@@ -305,7 +420,6 @@
 
               {/* Actions & Status */}
               <div className="flex items-center gap-2 sm:gap-3">
-                {/* Status GitHub badge */}
                 <button 
                   onClick={() => setIsSettingsOpen(true)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
@@ -320,7 +434,6 @@
                   <span className={`w-2 h-2 rounded-full ${githubConfig.token ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`}></span>
                 </button>
 
-                {/* Bouton Synchro */}
                 {githubConfig.token && (
                   <button
                     onClick={() => saveToGitHub()}
@@ -332,7 +445,6 @@
                   </button>
                 )}
 
-                {/* Nouvelle Recette */}
                 <button
                   onClick={() => { setRecipeToEdit(null); setIsFormOpen(true); }}
                   className="bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold px-3 py-2 sm:px-4 sm:py-2 rounded-lg transition shadow-md flex items-center gap-2 text-sm"
@@ -435,7 +547,6 @@
                     onClick={() => setSelectedRecipe(recipe)}
                     className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer group hover:-translate-y-0.5"
                   >
-                    {/* Image de Couverture (Résultat Final) */}
                     <div className="relative h-48 bg-slate-100 overflow-hidden">
                       <img
                         src={recipe.resultPhoto || recipe.originalPhoto || "https://placehold.co/600x400/f5f5f4/a8a29e?text=Pas+de+photo"}
@@ -455,7 +566,6 @@
                         )}
                       </div>
                       
-                      {/* Rating stars badge */}
                       {recipe.rating > 0 && (
                         <div className="absolute bottom-3 right-3 bg-white/90 backdrop-blur-md px-2 py-0.5 rounded-md shadow-sm flex items-center gap-1 text-amber-500 text-xs font-bold">
                           <Icon name="star" className="w-3.5 h-3.5 fill-current" />
@@ -464,7 +574,6 @@
                       )}
                     </div>
 
-                    {/* Contenu carte */}
                     <div className="p-5 flex-1 flex flex-col justify-between">
                       <div>
                         <h3 className="text-lg font-serif font-bold text-slate-800 group-hover:text-amber-700 transition-colors line-clamp-1">
@@ -508,7 +617,6 @@
           {selectedRecipe && (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
               <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[92vh] overflow-y-auto shadow-2xl relative my-auto border border-slate-100">
-                {/* En-tête photo & actions */}
                 <div className="relative h-64 sm:h-80 bg-slate-900">
                   <img
                     src={selectedRecipe.resultPhoto || selectedRecipe.originalPhoto || "https://placehold.co/800x500/f5f5f4/a8a29e?text=Photo"}
@@ -517,7 +625,6 @@
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent"></div>
                   
-                  {/* Boutons d'action haut */}
                   <div className="absolute top-4 right-4 flex items-center gap-2">
                     <button
                       onClick={() => { setRecipeToEdit(selectedRecipe); setIsFormOpen(true); }}
@@ -541,7 +648,6 @@
                     </button>
                   </div>
 
-                  {/* Titre & badges sur l'image */}
                   <div className="absolute bottom-6 left-6 right-6 text-white">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="bg-amber-600 text-amber-50 text-xs font-semibold px-2.5 py-0.5 rounded-full">
@@ -561,9 +667,7 @@
                   </div>
                 </div>
 
-                {/* Corps de la recette */}
                 <div className="p-6 space-y-6">
-                  {/* Méta infos */}
                   <div className="grid grid-cols-3 gap-4 bg-amber-50/70 rounded-xl p-4 border border-amber-100 text-center">
                     <div>
                       <span className="text-xs text-slate-500 uppercase tracking-wider block">Préparation</span>
@@ -579,7 +683,6 @@
                     </div>
                   </div>
 
-                  {/* SECTION COMPARAISON & ADAPTATION */}
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-5 border border-amber-200 shadow-sm space-y-3">
                     <div className="flex items-center gap-2 text-amber-900 font-serif font-bold text-lg">
                       <Icon name="sparkles" className="w-5 h-5 text-amber-600" />
@@ -589,7 +692,6 @@
                       {selectedRecipe.adaptations || "Aucune modification enregistrée pour cette recette."}
                     </p>
 
-                    {/* Source / Photo d'origine */}
                     {(selectedRecipe.originalSource || selectedRecipe.originalPhoto) && (
                       <div className="mt-4 pt-3 border-t border-amber-200/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-600">
                         {selectedRecipe.originalSource && (
@@ -612,9 +714,7 @@
                     )}
                   </div>
 
-                  {/* INGRÉDIENTS ET ÉTAPES */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Ingrédients (1 col) */}
                     <div className="space-y-3">
                       <h3 className="font-serif font-bold text-lg text-slate-800 border-b pb-2">Ingrédients</h3>
                       <ul className="space-y-2">
@@ -627,7 +727,6 @@
                       </ul>
                     </div>
 
-                    {/* Étapes (2 cols) */}
                     <div className="md:col-span-2 space-y-3">
                       <h3 className="font-serif font-bold text-lg text-slate-800 border-b pb-2">Instructions de préparation</h3>
                       <ol className="space-y-4">
@@ -643,7 +742,6 @@
                     </div>
                   </div>
 
-                  {/* Tags */}
                   {selectedRecipe.tags && selectedRecipe.tags.length > 0 && (
                     <div className="pt-4 border-t border-slate-100 flex flex-wrap gap-2">
                       {selectedRecipe.tags.map(tag => (
@@ -790,7 +888,6 @@
 
       const [tagInput, setTagInput] = useState("");
 
-      // Traitement des images uploadées avec compression automatique
       const handleImageUpload = async (e, field) => {
         const file = e.target.files[0];
         if (file) {
@@ -799,7 +896,6 @@
         }
       };
 
-      // Gestion dynamique de la liste d'ingrédients
       const updateIngredient = (index, val) => {
         const list = [...formData.ingredients];
         list[index] = val;
@@ -814,7 +910,6 @@
         setFormData({ ...formData, ingredients: formData.ingredients.filter((_, i) => i !== index) });
       };
 
-      // Gestion dynamique des étapes
       const updateStep = (index, val) => {
         const list = [...formData.steps];
         list[index] = val;
@@ -829,7 +924,6 @@
         setFormData({ ...formData, steps: formData.steps.filter((_, i) => i !== index) });
       };
 
-      // Gestion des tags
       const addTag = () => {
         if (tagInput.trim() && !formData.tags.includes(tagInput.trim())) {
           setFormData({ ...formData, tags: [...formData.tags, tagInput.trim()] });
@@ -862,7 +956,6 @@
               });
             }} className="p-6 space-y-6 max-h-[80vh] overflow-y-auto text-sm">
               
-              {/* Informations principales */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
                   <label className="block font-medium text-slate-700 mb-1">Titre de la recette *</label>
@@ -923,7 +1016,6 @@
                 </div>
               </div>
 
-              {/* SECTION: ADAPTATIONS & PHOTO DU RÉSULTAT */}
               <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200/80 space-y-4">
                 <h3 className="font-serif font-bold text-amber-900 flex items-center gap-2">
                   <Icon name="sparkles" className="w-5 h-5 text-amber-600" />
@@ -942,9 +1034,7 @@
                   ></textarea>
                 </div>
 
-                {/* Photos */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Photo Résultat */}
                   <div>
                     <label className="block font-medium text-slate-700 mb-1">Photo de votre résultat</label>
                     <input
@@ -958,7 +1048,6 @@
                     )}
                   </div>
 
-                  {/* Photo / Source Recette d'origine */}
                   <div>
                     <label className="block font-medium text-slate-700 mb-1">Photo / Livre de la recette originale</label>
                     <input
@@ -985,7 +1074,6 @@
                 </div>
               </div>
 
-              {/* Ingrédients */}
               <div className="space-y-2">
                 <label className="block font-medium text-slate-700">Ingrédients</label>
                 {formData.ingredients.map((ing, idx) => (
@@ -1013,7 +1101,6 @@
                 </button>
               </div>
 
-              {/* Étapes */}
               <div className="space-y-2">
                 <label className="block font-medium text-slate-700">Étapes de la recette</label>
                 {formData.steps.map((step, idx) => (
@@ -1042,7 +1129,6 @@
                 </button>
               </div>
 
-              {/* Tags */}
               <div>
                 <label className="block font-medium text-slate-700 mb-1">Tags & Mots-clés</label>
                 <div className="flex gap-2 mb-2">
@@ -1068,7 +1154,6 @@
                 </div>
               </div>
 
-              {/* Validation */}
               <div className="pt-4 border-t flex justify-end gap-3">
                 <button
                   type="button"
