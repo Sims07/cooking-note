@@ -523,7 +523,22 @@
             }
           });
 
-          if (!res.ok) throw new Error("Impossible de trouver le fichier sur GitHub.");
+          if (res.status === 404) {
+            // Le fichier n'existe pas encore : on vérifie que le dépôt est accessible, puis on le crée
+            const repoRes = await fetch(`https://api.github.com/repos/${githubConfig.owner}/${githubConfig.repo}`, {
+              headers: {
+                Authorization: `Bearer ${githubConfig.token}`,
+                Accept: "application/vnd.github.v3+json"
+              }
+            });
+            if (!repoRes.ok) {
+              throw new Error("Dépôt introuvable ou token sans accès (vérifiez le propriétaire, le nom du dépôt et le droit 'Contents').");
+            }
+            setStatusMessage(`${githubConfig.path} n'existe pas encore : création en cours...`);
+            await saveToGitHub(recipes);
+            return;
+          }
+          if (!res.ok) throw new Error(`Lecture impossible sur GitHub (code ${res.status}).`);
 
           const data = await res.json();
           const binaryString = atob(data.content.replace(/\n/g, ''));
