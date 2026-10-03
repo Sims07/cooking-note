@@ -53,12 +53,13 @@
     /* Impression d'une recette */
     #print-sheet { display: none; }
     @media print {
-      @page { margin: 14mm; }
+      @page { margin: 16mm 15mm 18mm; }
+      @page { @bottom-center { content: "Saveurs & Notes · page " counter(page); font-size: 9px; color: #a8a29e; } }
       body.is-printing { background: #fff !important; }
       body.is-printing #root > div { display: block !important; min-height: 0 !important; background: #fff !important; }
       body.is-printing #root > div > *:not(#print-sheet) { display: none !important; }
       body.is-printing #print-sheet { display: block !important; }
-      body.is-printing #print-sheet img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body.is-printing #print-sheet, body.is-printing #print-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
@@ -345,68 +346,124 @@
 
       const photo = (src) => (src && urls && urls[src]) || null;
       const stars = recipe.rating > 0 ? "★".repeat(recipe.rating) + "☆".repeat(5 - recipe.rating) : "";
+      const accent = "#b45309";
+      const frame = "#d6d3d1";
+      const label = "uppercase tracking-[0.25em] text-[9px] font-semibold";
+      const resultSrc = photo(recipe.resultPhoto);
+      const originalSrc = photo(recipe.originalPhoto);
+      const meta = [
+        recipe.prepTime && ["Préparation", recipe.prepTime],
+        recipe.cookTime && ["Cuisson", recipe.cookTime],
+        recipe.servings && ["Pour", `${recipe.servings} personnes`]
+      ].filter(Boolean);
+
+      const Ornament = () => (
+        <div className="flex items-center gap-3 my-3">
+          <span className="flex-1" style={{ borderTop: `1px solid ${accent}80` }}></span>
+          <span style={{ color: accent }}>✦</span>
+          <span className="flex-1" style={{ borderTop: `1px solid ${accent}80` }}></span>
+        </div>
+      );
 
       return (
-        <div id="print-sheet" className="text-slate-900 text-[13px] leading-relaxed">
-          <div className="border-b-2 border-amber-700 pb-2 mb-4">
-            <p className="text-xs uppercase tracking-widest text-amber-700 font-semibold">
-              {recipe.category}{stars ? ` · ${stars}` : ""}
-            </p>
-            <h1 className="text-3xl font-serif font-bold mt-1">{recipe.title}</h1>
-            <p className="text-xs text-slate-600 mt-1">
-              {recipe.prepTime ? `Préparation : ${recipe.prepTime}` : ""}
-              {recipe.cookTime ? ` · Cuisson : ${recipe.cookTime}` : ""}
-              {recipe.servings ? ` · ${recipe.servings} personnes` : ""}
-            </p>
-          </div>
+        <div id="print-sheet" className="text-[12.5px] leading-[1.55]" style={{ fontFamily: "Georgia, 'Times New Roman', serif", color: "#292524" }}>
+          {/* En-tête */}
+          <header className="text-center">
+            <p className={label} style={{ color: accent }}>Saveurs & Notes · {recipe.category}</p>
+            <h1 className="font-serif text-[30px] leading-tight font-bold mt-2" style={{ color: "#1c1917" }}>{recipe.title}</h1>
+            {stars && <p className="tracking-[0.3em] text-sm mt-1" style={{ color: "#d97706" }}>{stars}</p>}
+            <Ornament />
+            {meta.length > 0 && (
+              <div className="flex justify-center text-[11px]" style={{ color: "#57534e" }}>
+                {meta.map(([k, v], i) => (
+                  <span key={k} className="px-5" style={i > 0 ? { borderLeft: `1px solid ${accent}66` } : {}}>
+                    <span className="uppercase tracking-widest text-[9px] mr-1.5" style={{ color: accent }}>{k}</span>{v}
+                  </span>
+                ))}
+              </div>
+            )}
+          </header>
 
-          {photo(recipe.resultPhoto) && (
-            <img src={photo(recipe.resultPhoto)} alt="" className="w-full max-h-[85mm] object-cover rounded-lg mb-4" />
-          )}
-
-          {recipe.adaptations && (
-            <div className="border border-amber-300 bg-amber-50 rounded-lg p-3 mb-4 break-inside-avoid">
-              <h2 className="font-serif font-bold text-base mb-1">Mes adaptations & remarques</h2>
-              <p className="whitespace-pre-line">{recipe.adaptations}</p>
-            </div>
-          )}
-
-          <div className="mb-4 break-inside-avoid">
-            <h2 className="font-serif font-bold text-lg border-b border-slate-300 pb-1 mb-2">Ingrédients</h2>
-            <ul className="columns-2 gap-8">
-              {(recipe.ingredients || []).map((ing, i) => (
-                <li key={i} className="break-inside-avoid">☐ {ing}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="mb-4">
-            <h2 className="font-serif font-bold text-lg border-b border-slate-300 pb-1 mb-3">Préparation</h2>
-            <ol className="space-y-3">
-              {(recipe.steps || []).map((step, i) => (
-                <li key={i} className="break-inside-avoid">
-                  <p><span className="font-bold text-amber-700">{i + 1}.</span> {step}</p>
-                  {photo((recipe.stepPhotos || [])[i]) && (
-                    <img src={photo(recipe.stepPhotos[i])} alt="" className="mt-2 max-h-[60mm] max-w-full rounded-lg border border-slate-200 object-cover" />
-                  )}
-                </li>
-              ))}
-            </ol>
-          </div>
-
-          {(recipe.originalSource || photo(recipe.originalPhoto)) && (
-            <div className="mt-6 pt-3 border-t border-slate-300 break-inside-avoid">
-              <h2 className="font-serif font-bold text-base mb-1">Recette d'origine</h2>
-              {recipe.originalSource && <p className="text-xs text-slate-600 mb-2">Source : {recipe.originalSource}</p>}
-              {photo(recipe.originalPhoto) && (
-                <img src={photo(recipe.originalPhoto)} alt="" className="max-h-[110mm] max-w-full rounded-lg border border-slate-200 object-contain" />
+          {/* Photo du plat + note personnelle */}
+          {(resultSrc || recipe.adaptations) && (
+            <section className={`mt-6 grid gap-6 items-center ${resultSrc && recipe.adaptations ? "grid-cols-5" : "grid-cols-1"}`}>
+              {resultSrc && (
+                <figure className={`bg-white p-[2.5mm] border ${recipe.adaptations ? "col-span-3" : ""}`} style={{ borderColor: frame }}>
+                  <img src={resultSrc} alt="" className="w-full max-h-[90mm] object-cover" />
+                  <figcaption className="text-center italic text-[10px] mt-1.5" style={{ color: "#78716c" }}>Mon résultat</figcaption>
+                </figure>
               )}
-            </div>
+              {recipe.adaptations && (
+                <aside className={`pl-4 ${resultSrc ? "col-span-2" : ""}`} style={{ borderLeft: `3px solid ${accent}` }}>
+                  <p className={label} style={{ color: accent }}>Mes adaptations</p>
+                  <p className="italic mt-1.5 whitespace-pre-line text-[13px] leading-relaxed">{recipe.adaptations}</p>
+                </aside>
+              )}
+            </section>
           )}
 
-          {recipe.tags && recipe.tags.length > 0 && (
-            <p className="mt-4 text-xs text-slate-500">{recipe.tags.map((t) => `#${t}`).join("  ")}</p>
+          {/* Ingrédients */}
+          {recipe.ingredients && recipe.ingredients.length > 0 && (
+            <section className="mt-6 p-4 break-inside-avoid" style={{ background: "#fbf5e9", border: "1px solid #ead9b8" }}>
+              <p className={label} style={{ color: accent }}>Ingrédients</p>
+              <ul className="mt-2 columns-2 gap-8">
+                {recipe.ingredients.map((ing, i) => (
+                  <li key={i} className="flex gap-2 mb-1 break-inside-avoid">
+                    <span style={{ color: accent }}>•</span><span>{ing}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
+
+          {/* Préparation */}
+          {recipe.steps && recipe.steps.length > 0 && (
+            <section className="mt-6">
+              <p className={label} style={{ color: accent }}>Préparation</p>
+              <div className="mt-1" style={{ borderTop: `1px solid ${accent}66` }}></div>
+              <ol className="mt-3 space-y-4">
+                {recipe.steps.map((step, i) => {
+                  const stepSrc = photo((recipe.stepPhotos || [])[i]);
+                  return (
+                    <li key={i} className="flex gap-3 items-start break-inside-avoid">
+                      <span className="font-serif text-[26px] leading-none font-bold w-7 flex-shrink-0 text-right" style={{ color: accent }}>{i + 1}</span>
+                      <p className="flex-1 text-justify pt-0.5">{step}</p>
+                      {stepSrc && (
+                        <figure className="w-[42mm] flex-shrink-0 bg-white p-[1.5mm] border" style={{ borderColor: frame }}>
+                          <img src={stepSrc} alt="" className="w-full max-h-[45mm] object-cover" />
+                        </figure>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          )}
+
+          {/* Recette d'origine */}
+          {(recipe.originalSource || originalSrc) && (
+            <section className="mt-7 pt-4 break-inside-avoid" style={{ borderTop: `1px solid ${accent}66` }}>
+              <div className="flex gap-5 items-start">
+                {originalSrc && (
+                  <figure className="w-[90mm] flex-shrink-0 bg-white p-[1.5mm] border" style={{ borderColor: frame }}>
+                    <img src={originalSrc} alt="" className="w-full max-h-[120mm] object-contain" />
+                  </figure>
+                )}
+                <div>
+                  <p className={label} style={{ color: accent }}>Recette d'origine</p>
+                  {recipe.originalSource && <p className="italic mt-1.5">{recipe.originalSource}</p>}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Pied de recette */}
+          <footer className="mt-6 text-center">
+            <Ornament />
+            {recipe.tags && recipe.tags.length > 0 && (
+              <p className="text-[10px] tracking-wider" style={{ color: "#78716c" }}>{recipe.tags.join("  ·  ")}</p>
+            )}
+          </footer>
         </div>
       );
     }
