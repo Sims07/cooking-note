@@ -2,9 +2,21 @@
 <html lang="fr" class="h-full bg-slate-50">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Saveurs & Notes - Recettes Adaptées</title>
-  
+
+  <!-- PWA -->
+  <meta name="theme-color" content="#b45309" />
+  <meta name="description" content="Mes recettes adaptées et personnelles, disponibles hors ligne." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Saveurs & Notes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -136,6 +148,147 @@
       });
     }
 
+    // --- PHOTOS : stockées dans le dépôt GitHub (dossier photos/), jamais dans localStorage ---
+    // Le JSON ne contient que des chemins ("photos/xxx.jpg"). Les images sont conservées
+    // en cache dans IndexedDB (affichage hors ligne + file d'attente d'envoi).
+    const PHOTO_FIELDS = ["resultPhoto", "originalPhoto"];
+    const IMG_RE = /^(data:|https?:|blob:)/;
+    const PLACEHOLDER = "https://placehold.co/600x400/f5f5f4/a8a29e?text=Pas+de+photo";
+    let GH_CFG = {};
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open("saveurs_photos", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("photos");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async function idbGet(key) {
+      try {
+        const db = await openDB();
+        return await new Promise((res) => {
+          const q = db.transaction("photos").objectStore("photos").get(key);
+          q.onsuccess = () => res(q.result);
+          q.onerror = () => res(undefined);
+        });
+      } catch (e) { return undefined; }
+    }
+    async function idbPut(key, val) {
+      const db = await openDB();
+      return new Promise((res, rej) => {
+        const tx = db.transaction("photos", "readwrite");
+        tx.objectStore("photos").put(val, key);
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error);
+      });
+    }
+    async function idbKeys() {
+      try {
+        const db = await openDB();
+        return await new Promise((res) => {
+          const q = db.transaction("photos").objectStore("photos").getAllKeys();
+          q.onsuccess = () => res(q.result);
+          q.onerror = () => res([]);
+        });
+      } catch (e) { return []; }
+    }
+    const blobToDataUrl = (blob) => new Promise((res) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.readAsDataURL(blob);
+    });
+
+    // Remplace les photos en base64 par un chemin "photos/..." (l'image part dans IndexedDB, en attente d'envoi)
+    async function externalizeRecipe(recipe) {
+      const out = { ...recipe };
+      for (const f of PHOTO_FIELDS) {
+        if (typeof out[f] === "string" && out[f].startsWith("data:")) {
+          const suffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          const path = `photos/${String(out.id || "recette").replace(/[^a-zA-Z0-9_-]/g, "")}-${f === "resultPhoto" ? "resultat" : "original"}-${suffix}.jpg`;
+          await idbPut(path, { data: out[f], uploaded: false });
+          out[f] = path;
+        }
+      }
+      return out;
+    }
+
+    // Envoie vers GitHub les photos référencées qui n'y sont pas encore
+    async function uploadPendingPhotos(list, cfg, setMsg) {
+      const refs = new Set();
+      list.forEach((r) => PHOTO_FIELDS.forEach((f) => r[f] && refs.add(r[f])));
+      const todo = [];
+      for (const key of await idbKeys()) {
+        if (!refs.has(key)) continue;
+        const rec = await idbGet(key);
+        if (rec && rec.data && !rec.uploaded) todo.push([key, rec]);
+      }
+      let i = 0;
+      for (const [path, rec] of todo) {
+        i++;
+        setMsg(`Envoi des photos vers GitHub (${i}/${todo.length})...`);
+        const res = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${path}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${cfg.token}`,
+            "Content-Type": "application/json",
+            Accept: "application/vnd.github.v3+json"
+          },
+          body: JSON.stringify({
+            message: `Ajout photo ${path}`,
+            content: rec.data.split(",")[1],
+            branch: cfg.branch || "main"
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || `Échec de l'envoi de ${path}`);
+        }
+        await idbPut(path, { ...rec, uploaded: true });
+      }
+    }
+
+    // Retourne une URL affichable pour un chemin de photo : cache local → site publié → API GitHub
+    async function resolvePhoto(src) {
+      if (!src) return "";
+      if (IMG_RE.test(src)) return src;
+      const rec = await idbGet(src);
+      if (rec && rec.data) return rec.data;
+      try {
+        const r = await fetch("./" + src);
+        if (r.ok && (r.headers.get("content-type") || "").startsWith("image/")) {
+          const data = await blobToDataUrl(await r.blob());
+          await idbPut(src, { data, uploaded: true });
+          return data;
+        }
+      } catch (e) {}
+      const c = GH_CFG;
+      if (c && c.token && c.owner && c.repo && navigator.onLine) {
+        try {
+          const r = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${src}?ref=${c.branch || "main"}`, {
+            headers: { Authorization: `Bearer ${c.token}`, Accept: "application/vnd.github.raw" }
+          });
+          if (r.ok) {
+            const data = await blobToDataUrl(await r.blob());
+            await idbPut(src, { data, uploaded: true });
+            return data;
+          }
+        } catch (e) {}
+      }
+      return "";
+    }
+
+    function PhotoImg({ src, fallback, alt, className }) {
+      const [url, setUrl] = useState(src && IMG_RE.test(src) ? src : "");
+      useEffect(() => {
+        let alive = true;
+        if (!src) { setUrl(""); return; }
+        resolvePhoto(src).then((u) => { if (alive) setUrl(u); });
+        return () => { alive = false; };
+      }, [src, GH_CFG.token]);
+      return <img src={url || fallback || PLACEHOLDER} alt={alt} className={className} />;
+    }
+
     // --- EXEMPLES DE RECETTES PAR DÉFAUT ---
     const DEMO_RECIPES = [
       {
@@ -180,6 +333,11 @@
       const [syncStatus, setSyncStatus] = useState("idle"); // 'idle', 'syncing', 'success', 'error'
       const [statusMessage, setStatusMessage] = useState("");
 
+      // --- PWA : installation, mode hors ligne, mise à jour ---
+      const [installPrompt, setInstallPrompt] = useState(null);
+      const [isOnline, setIsOnline] = useState(navigator.onLine);
+      const [swRegistration, setSwRegistration] = useState(null); // défini quand une nouvelle version attend
+
       // Paramètres GitHub pré-configurés pour Sims07/cooking-note
       const [githubConfig, setGithubConfig] = useState({
         token: "",
@@ -188,6 +346,55 @@
         path: "recettes.json",
         branch: "main"
       });
+
+      GH_CFG = githubConfig;
+
+      // Écouteurs PWA
+      useEffect(() => {
+        const onBeforeInstall = (e) => { e.preventDefault(); setInstallPrompt(e); };
+        const onInstalled = () => { setInstallPrompt(null); setStatusMessage("Application installée !"); setSyncStatus("success"); setTimeout(() => { setSyncStatus("idle"); setStatusMessage(""); }, 3000); };
+        const onOnline = () => setIsOnline(true);
+        const onOffline = () => setIsOnline(false);
+        const onSwUpdate = (e) => setSwRegistration(e.detail);
+
+        window.addEventListener("beforeinstallprompt", onBeforeInstall);
+        window.addEventListener("appinstalled", onInstalled);
+        window.addEventListener("online", onOnline);
+        window.addEventListener("offline", onOffline);
+        window.addEventListener("sw-update-ready", onSwUpdate);
+        if (window.__swUpdateReg) setSwRegistration(window.__swUpdateReg);
+
+        return () => {
+          window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+          window.removeEventListener("appinstalled", onInstalled);
+          window.removeEventListener("online", onOnline);
+          window.removeEventListener("offline", onOffline);
+          window.removeEventListener("sw-update-ready", onSwUpdate);
+        };
+      }, []);
+
+      // Raccourci d'application : ./?action=new ouvre directement le formulaire
+      useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("action") === "new") {
+          setRecipeToEdit(null);
+          setIsFormOpen(true);
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+      }, []);
+
+      const handleInstall = async () => {
+        if (!installPrompt) return;
+        installPrompt.prompt();
+        await installPrompt.userChoice;
+        setInstallPrompt(null);
+      };
+
+      const applyUpdate = () => {
+        if (swRegistration && swRegistration.waiting) {
+          swRegistration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      };
 
       // Charger la configuration et les recettes au démarrage
       useEffect(() => {
@@ -199,15 +406,14 @@
         }
 
         const savedRecipes = localStorage.getItem("saveurs_local_recipes");
-        if (savedRecipes) {
+        (async () => {
           try {
-            setRecipes(JSON.parse(savedRecipes));
+            const parsed = savedRecipes ? JSON.parse(savedRecipes) : DEMO_RECIPES;
+            setRecipes(await Promise.all(parsed.map(externalizeRecipe)));
           } catch(e) {
             setRecipes(DEMO_RECIPES);
           }
-        } else {
-          setRecipes(DEMO_RECIPES);
-        }
+        })();
       }, []);
 
       // Sauvegarde automatique en localStorage
@@ -226,12 +432,20 @@
           return;
         }
 
+        if (!navigator.onLine) {
+          setSyncStatus("error");
+          setStatusMessage("Hors ligne : recette enregistrée sur cet appareil. Cliquez sur ↻ une fois reconnecté pour publier sur GitHub.");
+          return;
+        }
+
         setSyncStatus("syncing");
         setStatusMessage("Synchronisation avec GitHub en cours...");
 
         try {
           const url = `https://api.github.com/repos/${githubConfig.owner}/${githubConfig.repo}/contents/${githubConfig.path}`;
           
+          await uploadPendingPhotos(listToSave, githubConfig, setStatusMessage);
+
           let sha = "";
           try {
             const getRes = await fetch(url, {
@@ -291,6 +505,12 @@
           return;
         }
 
+        if (!navigator.onLine) {
+          setSyncStatus("error");
+          setStatusMessage("Hors ligne : impossible de charger depuis GitHub. Vos recettes locales restent disponibles.");
+          return;
+        }
+
         setSyncStatus("syncing");
         setStatusMessage("Chargement depuis GitHub...");
 
@@ -315,7 +535,7 @@
           const remoteRecipes = JSON.parse(decodedJson);
 
           if (Array.isArray(remoteRecipes)) {
-            setRecipes(remoteRecipes);
+            setRecipes(await Promise.all(remoteRecipes.map(externalizeRecipe)));
             setSyncStatus("success");
             setStatusMessage("Recettes chargées depuis GitHub !");
             setTimeout(() => setSyncStatus("idle"), 3000);
@@ -344,11 +564,11 @@
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = (event) => {
+        reader.onload = async (event) => {
           try {
             const imported = JSON.parse(event.target.result);
             if (Array.isArray(imported)) {
-              setRecipes(imported);
+              setRecipes(await Promise.all(imported.map(externalizeRecipe)));
               setStatusMessage("Recettes importées avec succès !");
             }
           } catch(err) {
@@ -373,18 +593,17 @@
         });
       }, [recipes, selectedCategory, searchQuery]);
 
-      const handleSaveRecipe = (recipeData) => {
-        let updatedList = [];
-        if (recipeData.id) {
-          updatedList = recipes.map(r => r.id === recipeData.id ? { ...recipeData, updatedAt: new Date().toISOString() } : r);
-        } else {
-          const newRecipe = { ...recipeData, id: 'recette-' + Date.now(), updatedAt: new Date().toISOString() };
-          updatedList = [newRecipe, ...recipes];
-        }
+      const handleSaveRecipe = async (recipeData) => {
+        const base = recipeData.id ? recipeData : { ...recipeData, id: 'recette-' + Date.now() };
+        const prepared = await externalizeRecipe({ ...base, updatedAt: new Date().toISOString() });
+        const updatedList = recipeData.id
+          ? recipes.map(r => r.id === prepared.id ? prepared : r)
+          : [prepared, ...recipes];
         setRecipes(updatedList);
+        if (selectedRecipe && selectedRecipe.id === prepared.id) setSelectedRecipe(prepared);
         setIsFormOpen(false);
         setRecipeToEdit(null);
-        
+
         if (githubConfig.token && githubConfig.owner && githubConfig.repo) {
           saveToGitHub(updatedList);
         }
@@ -420,6 +639,17 @@
 
               {/* Actions & Status */}
               <div className="flex items-center gap-2 sm:gap-3">
+                {installPrompt && (
+                  <button
+                    onClick={handleInstall}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white text-amber-800 hover:bg-amber-50 transition shadow-sm"
+                    title="Installer l'application"
+                  >
+                    <Icon name="download" className="w-4 h-4" />
+                    <span className="hidden md:inline">Installer l'app</span>
+                  </button>
+                )}
+
                 <button 
                   onClick={() => setIsSettingsOpen(true)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
@@ -455,6 +685,21 @@
               </div>
             </div>
           </header>
+
+          {/* BANDEAU HORS LIGNE */}
+          {!isOnline && (
+            <div className="text-center text-xs sm:text-sm py-2 px-4 font-medium bg-slate-800 text-slate-100">
+              Mode hors ligne : vos recettes sont consultables et modifiables, la synchronisation GitHub reprendra une fois reconnecté.
+            </div>
+          )}
+
+          {/* BANDEAU MISE À JOUR DISPONIBLE */}
+          {swRegistration && (
+            <div className="text-center text-xs sm:text-sm py-2 px-4 font-medium bg-emerald-600 text-white flex items-center justify-center gap-3">
+              <span>Une nouvelle version de l'application est disponible.</span>
+              <button onClick={applyUpdate} className="underline font-semibold hover:text-emerald-100">Mettre à jour</button>
+            </div>
+          )}
 
           {/* MESSAGE BANNER SYNC STATUS */}
           {statusMessage && (
@@ -548,11 +793,11 @@
                     className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col cursor-pointer group hover:-translate-y-0.5"
                   >
                     <div className="relative h-48 bg-slate-100 overflow-hidden">
-                      <img
-                        src={recipe.resultPhoto || recipe.originalPhoto || "https://placehold.co/600x400/f5f5f4/a8a29e?text=Pas+de+photo"}
+                      <PhotoImg
+                        src={recipe.resultPhoto || recipe.originalPhoto}
+                        fallback="https://placehold.co/600x400/f5f5f4/a8a29e?text=Pas+de+photo"
                         alt={recipe.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        onError={(e) => { e.target.src = "https://placehold.co/600x400/f5f5f4/a8a29e?text=Photo+non+disponible"; }}
                       />
                       <div className="absolute top-3 left-3 flex gap-2">
                         <span className="bg-amber-900/80 backdrop-blur-md text-amber-100 text-[11px] font-medium px-2.5 py-1 rounded-full shadow">
@@ -618,8 +863,9 @@
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
               <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[92vh] overflow-y-auto shadow-2xl relative my-auto border border-slate-100">
                 <div className="relative h-64 sm:h-80 bg-slate-900">
-                  <img
-                    src={selectedRecipe.resultPhoto || selectedRecipe.originalPhoto || "https://placehold.co/800x500/f5f5f4/a8a29e?text=Photo"}
+                  <PhotoImg
+                    src={selectedRecipe.resultPhoto || selectedRecipe.originalPhoto}
+                    fallback="https://placehold.co/800x500/f5f5f4/a8a29e?text=Photo"
                     alt={selectedRecipe.title}
                     className="w-full h-full object-cover opacity-90"
                   />
@@ -700,15 +946,20 @@
                           </div>
                         )}
                         {selectedRecipe.originalPhoto && (
-                          <a
-                            href={selectedRecipe.originalPhoto}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const u = await resolvePhoto(selectedRecipe.originalPhoto);
+                              if (!u) return;
+                              if (/^https?:/.test(u)) { window.open(u, "_blank", "noopener"); return; }
+                              const blob = await (await fetch(u)).blob();
+                              window.open(URL.createObjectURL(blob), "_blank");
+                            }}
                             className="inline-flex items-center gap-1.5 text-amber-700 hover:text-amber-900 font-medium underline"
                           >
                             <Icon name="camera" className="w-4 h-4" />
                             Voir la photo de la recette originale
-                          </a>
+                          </button>
                         )}
                       </div>
                     )}
@@ -1044,7 +1295,7 @@
                       className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-amber-100 file:text-amber-800 hover:file:bg-amber-200 cursor-pointer"
                     />
                     {formData.resultPhoto && (
-                      <img src={formData.resultPhoto} alt="Aperçu résultat" className="mt-2 h-24 w-full object-cover rounded-lg border" />
+                      <PhotoImg src={formData.resultPhoto} alt="Aperçu résultat" className="mt-2 h-24 w-full object-cover rounded-lg border" />
                     )}
                   </div>
 
@@ -1057,7 +1308,7 @@
                       className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-slate-100 file:text-slate-800 hover:file:bg-slate-200 cursor-pointer"
                     />
                     {formData.originalPhoto && (
-                      <img src={formData.originalPhoto} alt="Aperçu original" className="mt-2 h-24 w-full object-cover rounded-lg border" />
+                      <PhotoImg src={formData.originalPhoto} alt="Aperçu original" className="mt-2 h-24 w-full object-cover rounded-lg border" />
                     )}
                   </div>
                 </div>
@@ -1178,6 +1429,43 @@
     const rootElement = document.getElementById('root');
     const root = ReactDOM.createRoot(rootElement);
     root.render(<App />);
+  </script>
+
+  <!-- PWA : enregistrement du service worker -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", async () => {
+        try {
+          const reg = await navigator.serviceWorker.register("./sw.js");
+
+          const notifyUpdate = () => {
+            window.__swUpdateReg = reg;
+            window.dispatchEvent(new CustomEvent("sw-update-ready", { detail: reg }));
+          };
+
+          // Nouvelle version déjà en attente au chargement
+          if (reg.waiting && navigator.serviceWorker.controller) notifyUpdate();
+
+          reg.addEventListener("updatefound", () => {
+            const worker = reg.installing;
+            if (!worker) return;
+            worker.addEventListener("statechange", () => {
+              if (worker.state === "installed" && navigator.serviceWorker.controller) notifyUpdate();
+            });
+          });
+
+          // Recharger une fois la nouvelle version activée
+          let reloaded = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (reloaded) return;
+            reloaded = true;
+            window.location.reload();
+          });
+        } catch (err) {
+          console.warn("Service worker non enregistré :", err);
+        }
+      });
+    }
   </script>
 </body>
 </html>

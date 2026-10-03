@@ -1,0 +1,23 @@
+{
+  "name": "Saveurs & Notes - Recettes Adaptées",
+  "short_name": "Saveurs & Notes",
+  "description": "Mes recettes adaptées et personnelles, disponibles hors ligne.",
+  "lang": "fr",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8fafc",
+  "theme_color": "#b45309",
+  "categories": ["food", "lifestyle"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Ajouter une recette", "short_name": "Ajouter", "url": "./?action=new", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
