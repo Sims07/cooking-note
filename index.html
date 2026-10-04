@@ -114,6 +114,9 @@
         trash: (
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
         ),
+        cart: (
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+        ),
         print: (
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
         ),
@@ -354,7 +357,7 @@
       const meta = [
         recipe.prepTime && ["Préparation", recipe.prepTime],
         recipe.cookTime && ["Cuisson", recipe.cookTime],
-        recipe.servings && ["Pour", `${recipe.servings} personnes`]
+        recipe.servings && ["Pour", `${recipe.servings} personne${recipe.servings > 1 ? "s" : ""}`]
       ].filter(Boolean);
 
       const Ornament = () => (
@@ -468,6 +471,58 @@
       );
     }
 
+// --- PARTAGE : configuration encodée dans le fragment (#cfg=...) du lien ---
+    function encodeShare(obj) {
+      const bytes = new TextEncoder().encode(JSON.stringify(obj));
+      let bin = "";
+      bytes.forEach((b) => (bin += String.fromCharCode(b)));
+      return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+    function decodeShare(str) {
+      let b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4) b64 += "=";
+      const bin = atob(b64);
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    // Lecture sans token (dépôt public) : site publié d'abord, puis API GitHub anonyme
+    async function fetchPublicRecipes(cfg) {
+      try {
+        const r = await fetch(`./${cfg.path}`, { cache: "no-store" });
+        if (r.ok) {
+          const json = await r.json();
+          if (Array.isArray(json)) return json;
+        }
+      } catch (e) {}
+      const r = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.path}?ref=${cfg.branch || "main"}`, {
+        headers: { Accept: "application/vnd.github.raw" }
+      });
+      if (!r.ok) {
+        throw new Error("Lecture impossible sans token : le dépôt est privé ou le fichier n'existe pas. Demandez un lien avec accès complet.");
+      }
+      return await r.json();
+    }
+
+// --- LISTE DE COURSES : mise à l'échelle de la quantité en début de ligne ---
+    function scaleIngredient(text, factor) {
+      if (!factor || factor === 1) return text;
+      const m = text.match(/^(\s*)(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:[.,]\d+)?)(.*)$/);
+      if (!m) return text;
+      const [, lead, qty, rest] = m;
+      if (/^\s*[-–à]\s*\d/.test(rest)) return text; // fourchette (« 2-3 ») : on ne touche pas
+      let value;
+      if (qty.includes("/")) {
+        const parts = qty.trim().split(/\s+/);
+        const frac = parts[parts.length - 1].split("/");
+        value = (parts.length > 1 ? parseInt(parts[0], 10) : 0) + parseInt(frac[0], 10) / parseInt(frac[1], 10);
+      } else {
+        value = parseFloat(qty.replace(",", "."));
+      }
+      const scaled = Math.round(value * factor * 100) / 100;
+      return lead + String(scaled).replace(".", ",") + rest;
+    }
+
     // --- EXEMPLES DE RECETTES PAR DÉFAUT ---
     const DEMO_RECIPES = [
       {
@@ -513,6 +568,19 @@
       const [statusMessage, setStatusMessage] = useState("");
       const [lightboxSrc, setLightboxSrc] = useState(null);
       const [printRecipe, setPrintRecipe] = useState(null);
+      const [shareMsg, setShareMsg] = useState("");
+      const [readToken, setReadToken] = useState("");
+      const [shopOpen, setShopOpen] = useState(false);
+      const [shopInput, setShopInput] = useState("");
+      const [shopMsg, setShopMsg] = useState("");
+      const [shopPersons, setShopPersons] = useState({ id: null, n: "" });
+      const [shoppingList, setShoppingList] = useState(() => {
+        try { return JSON.parse(localStorage.getItem("saveurs_courses") || "[]"); } catch (e) { return []; }
+      });
+      useEffect(() => {
+        localStorage.setItem("saveurs_courses", JSON.stringify(shoppingList));
+      }, [shoppingList]);
+      const pendingCount = shoppingList.filter((i) => !i.checked).length;
 
       // --- PWA : installation, mode hors ligne, mise à jour ---
       const [installPrompt, setInstallPrompt] = useState(null);
@@ -528,6 +596,7 @@
         branch: "main"
       });
 
+      const canWrite = !!githubConfig.token && !githubConfig.readOnly;
       GH_CFG = githubConfig;
 
       // Écouteurs PWA
@@ -597,6 +666,32 @@
         })();
       }, []);
 
+      // Import de la configuration depuis un lien de partage (#cfg=...)
+      useEffect(() => {
+        const m = window.location.hash.match(/^#cfg=(.+)$/);
+        if (!m) return;
+        try {
+          const cfg = decodeShare(m[1]);
+          if (!cfg.owner || !cfg.repo) throw new Error("incomplet");
+          const merged = {
+            token: cfg.token || "",
+            owner: cfg.owner,
+            repo: cfg.repo,
+            path: cfg.path || "recettes.json",
+            branch: cfg.branch || "main",
+            readOnly: !!cfg.readOnly
+          };
+          localStorage.setItem("saveurs_github_config", JSON.stringify(merged));
+          setGithubConfig(merged);
+          // On retire la configuration (et le token) de la barre d'adresse
+          window.history.replaceState({}, "", window.location.pathname + window.location.search);
+          fetchFromGitHub(merged);
+        } catch (e) {
+          setSyncStatus("error");
+          setStatusMessage("Lien de partage invalide ou incomplet.");
+        }
+      }, []);
+
       // Sauvegarde automatique en localStorage
       useEffect(() => {
         if (recipes.length > 0) {
@@ -607,6 +702,11 @@
       // Synchronisation vers GitHub (Écriture)
       const saveToGitHub = async (customRecipesList = null) => {
         const listToSave = customRecipesList || recipes;
+        if (githubConfig.readOnly) {
+          setSyncStatus("error");
+          setStatusMessage("Accès en lecture seule : les modifications restent sur cet appareil.");
+          return;
+        }
         if (!githubConfig.token || !githubConfig.owner || !githubConfig.repo) {
           setIsSettingsOpen(true);
           setStatusMessage("Veuillez d'abord configurer vos identifiants GitHub.");
@@ -679,9 +779,10 @@
         }
       };
 
-      // Récupération depuis GitHub (Lecture)
-      const fetchFromGitHub = async () => {
-        if (!githubConfig.token || !githubConfig.owner || !githubConfig.repo) {
+      // Récupération depuis GitHub (Lecture) : avec token (API) ou sans token (dépôt public, lecture seule)
+      const fetchFromGitHub = async (cfgOverride) => {
+        const cfg = cfgOverride && cfgOverride.owner ? cfgOverride : githubConfig;
+        if (!cfg.owner || !cfg.repo) {
           setIsSettingsOpen(true);
           return;
         }
@@ -696,39 +797,35 @@
         setStatusMessage("Chargement depuis GitHub...");
 
         try {
-          const url = `https://api.github.com/repos/${githubConfig.owner}/${githubConfig.repo}/contents/${githubConfig.path}`;
-          const res = await fetch(url, {
-            headers: {
-              Authorization: `Bearer ${githubConfig.token}`,
-              Accept: "application/vnd.github.v3+json"
-            }
-          });
+          let remoteRecipes;
+          if (!cfg.token) {
+            remoteRecipes = await fetchPublicRecipes(cfg);
+          } else {
+            const headers = { Authorization: `Bearer ${cfg.token}`, Accept: "application/vnd.github.v3+json" };
+            const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.path}?ref=${cfg.branch || "main"}`;
+            const res = await fetch(url, { headers });
 
-          if (res.status === 404) {
-            // Le fichier n'existe pas encore : on vérifie que le dépôt est accessible, puis on le crée
-            const repoRes = await fetch(`https://api.github.com/repos/${githubConfig.owner}/${githubConfig.repo}`, {
-              headers: {
-                Authorization: `Bearer ${githubConfig.token}`,
-                Accept: "application/vnd.github.v3+json"
+            if (res.status === 404) {
+              if (cfgOverride || cfg.readOnly) throw new Error(`${cfg.path} est introuvable dans le dépôt.`);
+              // Le fichier n'existe pas encore : on vérifie que le dépôt est accessible, puis on le crée
+              const repoRes = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}`, { headers });
+              if (!repoRes.ok) {
+                throw new Error("Dépôt introuvable ou token sans accès (vérifiez le propriétaire, le nom du dépôt et le droit 'Contents').");
               }
-            });
-            if (!repoRes.ok) {
-              throw new Error("Dépôt introuvable ou token sans accès (vérifiez le propriétaire, le nom du dépôt et le droit 'Contents').");
+              setStatusMessage(`${cfg.path} n'existe pas encore : création en cours...`);
+              await saveToGitHub(recipes);
+              return;
             }
-            setStatusMessage(`${githubConfig.path} n'existe pas encore : création en cours...`);
-            await saveToGitHub(recipes);
-            return;
-          }
-          if (!res.ok) throw new Error(`Lecture impossible sur GitHub (code ${res.status}).`);
+            if (!res.ok) throw new Error(`Lecture impossible sur GitHub (code ${res.status}).`);
 
-          const data = await res.json();
-          const binaryString = atob(data.content.replace(/\n/g, ''));
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
+            const data = await res.json();
+            const binaryString = atob(data.content.replace(/\n/g, ''));
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            remoteRecipes = JSON.parse(new TextDecoder().decode(bytes));
           }
-          const decodedJson = new TextDecoder().decode(bytes);
-          const remoteRecipes = JSON.parse(decodedJson);
 
           if (Array.isArray(remoteRecipes)) {
             setRecipes(await Promise.all(remoteRecipes.map(externalizeRecipe)));
@@ -741,6 +838,79 @@
         } catch (error) {
           setSyncStatus("error");
           setStatusMessage(`Erreur : ${error.message}`);
+        }
+      };
+
+      // --- Liste de courses ---
+      const addToShopping = (recipe, persons) => {
+        const factor = recipe.servings && persons ? persons / recipe.servings : 1;
+        const existing = new Set(shoppingList.filter((i) => !i.checked).map((i) => i.text.toLowerCase().trim()));
+        const added = (recipe.ingredients || [])
+          .map((ing) => scaleIngredient(ing, factor))
+          .filter((t) => t.trim() && !existing.has(t.toLowerCase().trim()))
+          .map((t, i) => ({ id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`, text: t, checked: false, from: recipe.title }));
+        setShoppingList((prev) => [...prev, ...added]);
+        setSyncStatus("success");
+        setStatusMessage(added.length
+          ? `${added.length} ingrédient${added.length > 1 ? "s" : ""} ajouté${added.length > 1 ? "s" : ""} à la liste de courses.`
+          : "Ces ingrédients sont déjà dans la liste de courses.");
+        setTimeout(() => { setSyncStatus("idle"); setStatusMessage(""); }, 3000);
+      };
+      const toggleShopItem = (id) => setShoppingList((l) => l.map((i) => i.id === id ? { ...i, checked: !i.checked } : i));
+      const removeShopItem = (id) => setShoppingList((l) => l.filter((i) => i.id !== id));
+      const addShopItem = () => {
+        const t = shopInput.trim();
+        if (!t) return;
+        setShoppingList((l) => [...l, { id: `${Date.now()}-m`, text: t, checked: false, from: "" }]);
+        setShopInput("");
+      };
+      // Export : un article par ligne (les articles cochés sont ignorés), prêt à coller dans n'importe quelle appli
+      const exportShopping = async (mode) => {
+        const lines = shoppingList.filter((i) => !i.checked).map((i) => i.text);
+        if (!lines.length) { setShopMsg("Rien à exporter : tous les articles sont cochés."); return; }
+        const text = lines.join("\n");
+        if (mode === "share" && navigator.share) {
+          try {
+            await navigator.share({ title: "Liste de courses", text });
+            return;
+          } catch (e) {
+            if (e && e.name === "AbortError") return;
+          }
+        }
+        try {
+          await navigator.clipboard.writeText(text);
+          setShopMsg(`${lines.length} article${lines.length > 1 ? "s" : ""} copié${lines.length > 1 ? "s" : ""} : collez dans votre appli de notes ou de rappels.`);
+        } catch (e) {
+          prompt("Copiez la liste :", text);
+        }
+      };
+
+      // Partage : génère un lien qui configure l'application chez le destinataire
+      const shareLink = async (full) => {
+        if (full && !confirm("Ce lien contient votre token GitHub : toute personne qui l'a peut modifier vos recettes. À envoyer uniquement à des personnes de confiance, par un canal privé. Continuer ?")) return;
+        const cfg = { owner: githubConfig.owner, repo: githubConfig.repo, path: githubConfig.path, branch: githubConfig.branch };
+        if (full) {
+          cfg.token = githubConfig.token;
+        } else if (readToken.trim()) {
+          if (readToken.trim() === githubConfig.token && !confirm("Ce token de lecture est identique à votre token d'accès complet : il permettrait aussi d'écrire dans le dépôt. Continuer quand même ?")) return;
+          cfg.token = readToken.trim();
+          cfg.readOnly = true;
+        }
+        const url = `${window.location.origin}${window.location.pathname}#cfg=${encodeShare(cfg)}`;
+        try {
+          if (navigator.share) {
+            await navigator.share({ title: "Saveurs & Notes", text: "Mes recettes : ouvrez ce lien pour configurer l'application.", url });
+            setShareMsg("Lien partagé.");
+            return;
+          }
+        } catch (e) {
+          if (e && e.name === "AbortError") return;
+        }
+        try {
+          await navigator.clipboard.writeText(url);
+          setShareMsg(full ? "Lien (accès complet) copié dans le presse-papiers." : "Lien (lecture seule) copié dans le presse-papiers.");
+        } catch (e) {
+          prompt("Copiez ce lien :", url);
         }
       };
 
@@ -800,7 +970,7 @@
         setIsFormOpen(false);
         setRecipeToEdit(null);
 
-        if (githubConfig.token && githubConfig.owner && githubConfig.repo) {
+        if (canWrite && githubConfig.owner && githubConfig.repo) {
           saveToGitHub(updatedList);
         }
       };
@@ -812,7 +982,7 @@
           if (selectedRecipe && selectedRecipe.id === id) {
             setSelectedRecipe(null);
           }
-          if (githubConfig.token && githubConfig.owner && githubConfig.repo) {
+          if (canWrite && githubConfig.owner && githubConfig.repo) {
             saveToGitHub(updatedList);
           }
         }
@@ -835,6 +1005,19 @@
 
               {/* Actions & Status */}
               <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  onClick={() => { setShopMsg(""); setShopOpen(true); }}
+                  className="relative p-2 bg-amber-800 hover:bg-amber-900 text-amber-100 rounded-lg transition shadow-sm"
+                  title="Liste de courses"
+                >
+                  <Icon name="cart" className="w-5 h-5" />
+                  {pendingCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
+                      {pendingCount}
+                    </span>
+                  )}
+                </button>
+
                 {installPrompt && (
                   <button
                     onClick={handleInstall}
@@ -855,12 +1038,23 @@
                 >
                   <Icon name="github" className="w-4 h-4" />
                   <span className="hidden md:inline">
-                    {githubConfig.token ? `${githubConfig.owner}/${githubConfig.repo}` : 'Configurer GitHub'}
+                    {githubConfig.token ? `${githubConfig.owner}/${githubConfig.repo}${githubConfig.readOnly ? ' (lecture)' : ''}` : 'Configurer GitHub'}
                   </span>
                   <span className={`w-2 h-2 rounded-full ${githubConfig.token ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`}></span>
                 </button>
 
-                {githubConfig.token && (
+                {!canWrite && githubConfig.owner && githubConfig.repo && (
+                  <button
+                    onClick={() => fetchFromGitHub()}
+                    disabled={syncStatus === "syncing"}
+                    className="p-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition shadow-sm flex items-center justify-center"
+                    title="Actualiser les recettes depuis GitHub (lecture)"
+                  >
+                    <Icon name="download" className={`w-5 h-5 ${syncStatus === 'syncing' ? 'animate-pulse' : ''}`} />
+                  </button>
+                )}
+
+                {canWrite && (
                   <button
                     onClick={() => saveToGitHub()}
                     disabled={syncStatus === "syncing"}
@@ -1166,6 +1360,24 @@
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="space-y-3">
                       <h3 className="font-serif font-bold text-lg text-slate-800 border-b pb-2">Ingrédients</h3>
+                      <div className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-100 rounded-lg p-2">
+                        <span className="text-slate-600">Pour</span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={shopPersons.id === selectedRecipe.id ? shopPersons.n : (selectedRecipe.servings || 1)}
+                          onChange={(e) => setShopPersons({ id: selectedRecipe.id, n: e.target.value })}
+                          className="w-14 px-2 py-1 border rounded-md text-center bg-white"
+                        />
+                        <span className="text-slate-600">pers.</span>
+                        <button
+                          type="button"
+                          onClick={() => addToShopping(selectedRecipe, Number(shopPersons.id === selectedRecipe.id ? shopPersons.n : (selectedRecipe.servings || 1)))}
+                          className="ml-auto inline-flex items-center gap-1 bg-amber-700 hover:bg-amber-800 text-white px-2.5 py-1 rounded-md font-medium"
+                        >
+                          <Icon name="cart" className="w-3.5 h-3.5" /> Ajouter aux courses
+                        </button>
+                      </div>
                       <ul className="space-y-2">
                         {selectedRecipe.ingredients && selectedRecipe.ingredients.map((ing, idx) => (
                           <li key={idx} className="text-sm text-slate-700 flex items-start gap-2">
@@ -1211,6 +1423,91 @@
                       ))}
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* LISTE DE COURSES */}
+          {shopOpen && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3" onClick={() => setShopOpen(false)}>
+              <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-100" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-serif font-bold text-lg text-slate-800">
+                    <Icon name="cart" className="w-5 h-5 text-amber-700" />
+                    <h2>Liste de courses</h2>
+                  </div>
+                  <button onClick={() => setShopOpen(false)} className="text-slate-400 hover:text-slate-600">
+                    <Icon name="close" className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="px-5 py-3 flex gap-2 border-b border-slate-100">
+                  <input
+                    type="text"
+                    value={shopInput}
+                    onChange={(e) => setShopInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addShopItem(); } }}
+                    placeholder="Ajouter un article (ex: papier cuisson)"
+                    className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button onClick={addShopItem} className="px-3 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg">
+                    <Icon name="plus" className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-5 py-3">
+                  {shoppingList.length === 0 ? (
+                    <p className="text-sm text-slate-500 text-center py-8">
+                      Votre liste est vide. Ouvrez une recette puis « Ajouter aux courses ».
+                    </p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {shoppingList.map((item) => (
+                        <li key={item.id} className="flex items-start gap-2.5 group">
+                          <input
+                            type="checkbox"
+                            checked={item.checked}
+                            onChange={() => toggleShopItem(item.id)}
+                            className="mt-1 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <span className={`text-sm ${item.checked ? "line-through text-slate-400" : "text-slate-800"}`}>{item.text}</span>
+                            {item.from && <span className="block text-[10px] text-slate-400">{item.from}</span>}
+                          </div>
+                          <button onClick={() => removeShopItem(item.id)} className="text-slate-300 hover:text-red-500" title="Retirer">
+                            <Icon name="close" className="w-4 h-4" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="px-5 py-4 border-t border-slate-100 space-y-2">
+                  <div className="flex gap-2">
+                    <button onClick={() => exportShopping("share")} className="flex-1 px-3 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-medium">
+                      Envoyer vers une appli
+                    </button>
+                    <button onClick={() => exportShopping("copy")} className="flex-1 px-3 py-2 bg-white border border-amber-300 hover:bg-amber-50 text-amber-800 rounded-lg text-xs font-medium">
+                      Copier la liste
+                    </button>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    <button
+                      onClick={() => setShoppingList((l) => l.filter((i) => !i.checked))}
+                      className="flex-1 px-3 py-1.5 border rounded-lg text-slate-600 hover:bg-slate-50"
+                    >
+                      Retirer les cochés
+                    </button>
+                    <button
+                      onClick={() => { if (shoppingList.length && confirm("Vider toute la liste de courses ?")) setShoppingList([]); }}
+                      className="flex-1 px-3 py-1.5 border rounded-lg text-red-600 hover:bg-red-50"
+                    >
+                      Tout vider
+                    </button>
+                  </div>
+                  {shopMsg && <p className="text-xs text-emerald-700 font-medium">{shopMsg}</p>}
                 </div>
               </div>
             </div>
@@ -1278,13 +1575,21 @@
                     <label className="block font-medium text-slate-700 mb-1">GitHub Token (PAT)</label>
                     <input
                       type="password"
-                      required
                       placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
                       value={githubConfig.token}
                       onChange={(e) => setGithubConfig({ ...githubConfig, token: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 font-mono text-xs"
                     />
-                    <span className="text-[10px] text-slate-400 block mt-1">Nécessite la portée 'repo' ou 'contents:write'.</span>
+                    <span className="text-[10px] text-slate-400 block mt-1">Facultatif si le dépôt est public (lecture sans token). Droit « Contents » en lecture/écriture pour modifier.</span>
+                    <label className="flex items-center gap-2 mt-2 text-[11px] text-slate-600 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!githubConfig.readOnly}
+                        onChange={(e) => setGithubConfig({ ...githubConfig, readOnly: e.target.checked })}
+                        className="rounded text-amber-600 focus:ring-amber-500"
+                      />
+                      Ce token est en lecture seule (consultation uniquement)
+                    </label>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -1346,6 +1651,48 @@
                     </button>
                   </div>
                 </form>
+
+                <div className="border-t pt-4 space-y-2">
+                  <div className="flex items-center gap-2 text-slate-800 font-serif font-bold text-base">
+                    <Icon name="users" className="w-4 h-4 text-amber-700" />
+                    <h3>Partager l'application</h3>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Le lien configure automatiquement l'application chez la personne qui l'ouvre.
+                  </p>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">Token de lecture (pour le lien lecture seule)</label>
+                    <input
+                      type="password"
+                      value={readToken}
+                      onChange={(e) => setReadToken(e.target.value)}
+                      placeholder="github_pat_… (droit Contents : lecture seule)"
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 font-mono text-xs"
+                    />
+                    <span className="text-[10px] text-slate-400 block mt-1">Obligatoire si le dépôt est privé. Laissez vide si le dépôt est public.</span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={() => shareLink(false)}
+                      className="flex-1 px-3 py-2 bg-white border border-amber-300 hover:bg-amber-50 text-amber-800 rounded-lg text-xs font-medium"
+                    >
+                      Lien lecture seule
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => shareLink(true)}
+                      disabled={!githubConfig.token}
+                      className="flex-1 px-3 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-medium disabled:opacity-40"
+                    >
+                      Lien accès complet
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    Lecture seule : le lien contient le token de lecture saisi ci-dessus (il ne permet pas de modifier). Accès complet : le lien contient votre token d'écriture, à réserver aux personnes de confiance.
+                  </p>
+                  {shareMsg && <p className="text-xs text-emerald-700 font-medium">{shareMsg}</p>}
+                </div>
               </div>
             </div>
           )}
@@ -1522,6 +1869,19 @@
                     value={formData.cookTime}
                     onChange={(e) => setFormData({ ...formData, cookTime: e.target.value })}
                     placeholder="Ex: 45 min"
+                    className="w-full px-3.5 py-2 border rounded-xl focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Nombre de personnes</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={formData.servings}
+                    onChange={(e) => setFormData({ ...formData, servings: e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                    placeholder="Ex: 4"
                     className="w-full px-3.5 py-2 border rounded-xl focus:ring-2 focus:ring-amber-500"
                   />
                 </div>

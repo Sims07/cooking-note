@@ -1,5 +1,5 @@
 /* Service worker - Saveurs & Notes */
-const VERSION = "v2";
+const VERSION = "v4";
 const SHELL_CACHE = `saveurs-shell-${VERSION}`;
 const RUNTIME_CACHE = `saveurs-runtime-${VERSION}`;
 
@@ -27,7 +27,11 @@ const CDN = [
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const shell = await caches.open(SHELL_CACHE);
-    await shell.addAll(SHELL);
+    await Promise.all(SHELL.map(async (u) => {
+      const res = await fetch(new Request(u, { cache: "reload" }));
+      if (!res.ok) throw new Error("Précache impossible : " + u);
+      await shell.put(u, res);
+    }));
     // Un échec CDN ne doit pas bloquer l'installation
     await Promise.all(CDN.map(async (url) => {
       try {
@@ -60,11 +64,25 @@ self.addEventListener("fetch", (event) => {
   // L'API GitHub passe toujours par le réseau (jamais en cache : token + données fraîches)
   if (url.hostname === "api.github.com") return;
 
+  // Fichiers JSON de recettes : réseau d'abord (données fraîches), cache en secours hors ligne
+  if (url.origin === self.location.origin && url.pathname.endsWith(".json")) {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req, { cache: "no-store" });
+        if (res.ok) (await caches.open(RUNTIME_CACHE)).put(req, res.clone());
+        return res;
+      } catch (e) {
+        return (await caches.match(req)) || new Response("[]", { status: 504 });
+      }
+    })());
+    return;
+  }
+
   // Navigation : réseau d'abord, repli sur la page en cache
   if (req.mode === "navigate") {
     event.respondWith((async () => {
       try {
-        const res = await fetch(req);
+        const res = await fetch(req, { cache: "no-cache" });
         const cache = await caches.open(SHELL_CACHE);
         cache.put("./index.html", res.clone());
         return res;
