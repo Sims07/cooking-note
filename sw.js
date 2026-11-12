@@ -1,5 +1,5 @@
 /* Service worker - Saveurs & Notes */
-const VERSION = "v4";
+const VERSION = "v5";
 const SHELL_CACHE = `saveurs-shell-${VERSION}`;
 const RUNTIME_CACHE = `saveurs-runtime-${VERSION}`;
 
@@ -45,8 +45,13 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
+    // CacheStorage is shared by every PWA on sims07.github.io.
+    // Never remove caches owned by Companion Correcteur or other installed apps.
     await Promise.all(
-      keys.filter((k) => ![SHELL_CACHE, RUNTIME_CACHE].includes(k)).map((k) => caches.delete(k))
+      keys.filter((k) =>
+        (k.startsWith("saveurs-shell-") || k.startsWith("saveurs-runtime-")) &&
+        ![SHELL_CACHE, RUNTIME_CACHE].includes(k)
+      ).map((k) => caches.delete(k))
     );
     await self.clients.claim();
   })());
